@@ -6,13 +6,12 @@
     #include <asm/unistd_32.h>
 #endif
 
-#define MIN(a,b) (((a)<(b))?(a):(b))
-
 // framebuffer settings
 //#define FRAMEBUFFER_WIDTH 1920
 //#define FRAMEBUFFER_HEIGHT 1080
 #define FRAMEBUFFER_COMPONENTS 4
 #define FRAMEBUFFER_LENGTH (FRAMEBUFFER_WIDTH * FRAMEBUFFER_HEIGHT * FRAMEBUFFER_COMPONENTS)
+#define FRAMEBUFFER_BOUNDS (FRAMEBUFFER_WIDTH * FRAMEBUFFER_HEIGHT - 4)
 
 // image settings
 //#define IMAGE_WIDTH (FRAMEBUFFER_HEIGHT-180) // should be roughly equal to FRAMEBUFFER_HEIGHT - 180
@@ -42,8 +41,23 @@ inline static unsigned int *sys_mmap(unsigned int *addr, unsigned long length, u
     __asm__ volatile ("syscall" : "=a" (r) : "a" (__NR_mmap), "D" (addr), "S" (length), "d" (prot), "r" (r10), "r" (r8) : "cc", "memory", "r11", "rcx");
     return r;
 #else
-    __asm__ volatile("push %%ebp\nmov %0, %%ebp\nint $0x80\npop %%ebp\n" : : "a" (__NR_mmap), "b" (addr), "c" (length), "d" (prot), "S" (flags), "D" (fd) : "memory");
+    unsigned int args[2] = { (unsigned int)addr, 0 };
+    unsigned int *r;
+
+    __asm__ __volatile__("push %%ebp\n"
+                        "movl 4(%%ebx), %%ebp\n"
+                        "movl 0(%%ebx), %%ebx\n"
+                        "int $0x80\n"
+                        "pop %%ebp\n"
+                        : "=a"(r)
+                        : "a"(__NR_mmap2), "b"(&args),
+                            "c"(length), "d"(prot), "S"(flags), "D"(fd));
+    return r;
 #endif
+}
+
+unsigned int min(unsigned int a, unsigned int b) {
+    return (a < b) ? a : b;
 }
 
 unsigned int getPixelIndex(unsigned int x, unsigned int y) {
@@ -93,10 +107,17 @@ void _start() {
         unsigned int x1 = ifs_x[j];
         unsigned int y1 = ifs_y[j] * j;
 
-        i1 = MIN(getPixelIndex(OFFSET_X + x1, IMAGE_HEIGHT - y1), FRAMEBUFFER_WIDTH*FRAMEBUFFER_HEIGHT-4);
-        unsigned int i2 = MIN(getPixelIndex(OFFSET_X + IMAGE_WIDTH - x1, IMAGE_HEIGHT - y1), FRAMEBUFFER_WIDTH*FRAMEBUFFER_HEIGHT-4);
-        unsigned int i3 = MIN(getPixelIndex(OFFSET_X + IMAGE_WIDTH * 0.285 + ifs_x[j] * 2, y1), FRAMEBUFFER_WIDTH*FRAMEBUFFER_HEIGHT-4);
-        unsigned int i4 = MIN(getPixelIndex(OFFSET_X + IMAGE_WIDTH - ifs_x[j] * 2 - IMAGE_WIDTH * 0.285, y1), FRAMEBUFFER_WIDTH*FRAMEBUFFER_HEIGHT-4);
+        unsigned int xx1 = OFFSET_X + x1;
+        unsigned int xx2 = OFFSET_X + IMAGE_WIDTH - ifs_x[j] * 2 - IMAGE_WIDTH * 0.285;
+
+        i1 = min(getPixelIndex(xx1, IMAGE_HEIGHT - y1), FRAMEBUFFER_BOUNDS);
+        unsigned int i2 =  min(getPixelIndex(FRAMEBUFFER_WIDTH - xx1, IMAGE_HEIGHT - y1), FRAMEBUFFER_BOUNDS);
+        unsigned int i3 =  min(getPixelIndex(FRAMEBUFFER_WIDTH - xx2, y1), FRAMEBUFFER_BOUNDS);
+        // party code (note : optimized after)
+        //unsigned int i2 = MIN(getPixelIndex(OFFSET_X + IMAGE_WIDTH - x1, IMAGE_HEIGHT - y1), FRAMEBUFFER_WIDTH*FRAMEBUFFER_HEIGHT-4);
+        //unsigned int i3 = MIN(getPixelIndex(OFFSET_X + IMAGE_WIDTH * 0.285 + ifs_x[j] * 2, y1), FRAMEBUFFER_WIDTH*FRAMEBUFFER_HEIGHT-4);
+        //
+        unsigned int i4 = min(getPixelIndex(xx2, y1), FRAMEBUFFER_BOUNDS);
 
         int color = 65793*2; // white
         if (j == 1) {
